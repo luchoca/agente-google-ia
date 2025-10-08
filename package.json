@@ -1,11 +1,19 @@
 {
+  "name": "google-workspace-mcp",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "serverv3.js",
+  "scripts": {
+    "start": "node serverv3.js",
+    "dev": "nodemon serverv3.js"
+  },
   "dependencies": {
     "@google-cloud/local-auth": "^3.0.1",
     "@modelcontextprotocol/sdk": "^1.19.1",
     "dotenv": "^17.2.3",
     "googleapis": "^161.0.0"
   },
-  "type": "module",
-  "name": "google-workspace-mcp",
-  "version": "1.0.0"
+  "devDependencies": {
+    "nodemon": "^3.0.0"
+  }
 }

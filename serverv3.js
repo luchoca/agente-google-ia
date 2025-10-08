@@ -60,11 +60,42 @@ class GoogleWorkspaceMCPServer {
 
     async loadSavedCredentialsIfExist() {
         try {
-            const content = await fs.readFile(TOKEN_PATH);
+            let content;
+            let keys;
+            
+            // Intentar cargar desde variables de entorno primero
+            if (process.env.GOOGLE_TOKEN) {
+                content = process.env.GOOGLE_TOKEN;
+                const credentials = JSON.parse(content);
+                
+                keys = process.env.GOOGLE_CREDENTIALS 
+                    ? JSON.parse(process.env.GOOGLE_CREDENTIALS)
+                    : JSON.parse(await fs.readFile(CREDENTIALS_PATH));
+                    
+                const key = keys.installed || keys.web;
+                const client = new google.auth.OAuth2(
+                    key.client_id,
+                    key.client_secret,
+                    key.redirect_uris[0]
+                );
+
+                client.setCredentials({
+                    refresh_token: credentials.refresh_token,
+                    access_token: credentials.access_token,
+                    token_type: credentials.token_type,
+                    expiry_date: credentials.expiry_date,
+                });
+
+                console.error("✅ Token cargado desde variables de entorno");
+                return client;
+            }
+            
+            // Si no hay variables de entorno, cargar desde archivos
+            content = await fs.readFile(TOKEN_PATH);
             const credentials = JSON.parse(content);
 
             // Leer las credenciales originales para obtener client_id y client_secret
-            const keys = JSON.parse(await fs.readFile(CREDENTIALS_PATH));
+            keys = JSON.parse(await fs.readFile(CREDENTIALS_PATH));
             const key = keys.installed || keys.web;
 
             // Crear OAuth2Client con las credenciales correctas
@@ -177,7 +208,6 @@ class GoogleWorkspaceMCPServer {
             this.calendar = google.calendar({ version: "v3", auth: this.auth });
             this.docs = google.docs({ version: "v1", auth: this.auth });
             this.drive = google.drive({ version: "v3", auth: this.auth });
-            console.error("✅ Autenticación exitosa - Servidor listo");
             // 🆕 INICIALIZACIÓN DE GOOGLE FIT
             this.fit = google.fitness({ version: "v1", auth: this.auth });
             console.error("✅ Autenticación exitosa - Servidor listo");
@@ -560,7 +590,8 @@ class GoogleWorkspaceMCPServer {
                         },
                         required: ["documentId", "email", "role"],
                     },
-                },// 🆕 GOOGLE FIT TOOLS
+                },
+                // 🆕 GOOGLE FIT TOOLS
                 {
                     name: "fit_get_activity_summary",
                     description: "Obtiene datos agregados de pasos y actividad física en un período. Usa milisegundos de Unix para el tiempo.",
@@ -937,7 +968,6 @@ class GoogleWorkspaceMCPServer {
         for (const event of events) {
             const eventStart = new Date(event.start.dateTime || event.start.date);
             const eventEnd = new Date(event.end.dateTime || event.end.date);
-
             if (eventStart - currentTime >= duration * 60000) {
                 freeSlots.push({
                     start: currentTime.toISOString(),
@@ -1219,23 +1249,19 @@ class GoogleWorkspaceMCPServer {
         };
     }
 
-
+    // Google Fit Methods
     async getActivitySummary(args) {
         const { startTimeMillis, endTimeMillis } = args;
 
-        // La API de Fitness requiere que el endTimeMillis sea mayor que startTimeMillis.
-        // Es común usar 86400000 ms (1 día) para agregar por día.
         const bucketDuration = 86400000; // 1 día en milisegundos
 
         const res = await this.fit.users.dataset.aggregate({
             userId: 'me',
             requestBody: {
-                // Agregamos por pasos y calorías (los más comunes)
                 aggregateBy: [
                     { dataTypeName: "com.google.step_count.delta" },
                     { dataTypeName: "com.google.calories.expended" }
                 ],
-                // Agrupar los datos por la duración de un día
                 bucketByTime: { durationMillis: bucketDuration },
                 startTimeMillis,
                 endTimeMillis,
@@ -1243,7 +1269,6 @@ class GoogleWorkspaceMCPServer {
         });
 
         const summary = res.data.bucket.map(bucket => {
-            // Busca los valores relevantes dentro de cada bucket (día)
             const stepsData = bucket.dataset.find(d => d.dataSourceId.includes('step_count'));
             const caloriesData = bucket.dataset.find(d => d.dataSourceId.includes('calories.expended'));
 
@@ -1264,92 +1289,58 @@ class GoogleWorkspaceMCPServer {
             }],
         };
     }
-    // async recordActivitySession(args) {
-    //     const { activityType, durationMinutes, startTimeMillis } = args;
 
-    //     // Convertir duración a milisegundos
-    //     const durationMillis = durationMinutes * 60 * 1000;
-    //     const endTimeMillis = startTimeMillis + durationMillis;
-
-    //     // Nota: Los tipos de actividad son códigos (ej: 72 para "running"). 
-    //     // Aquí usamos strings comunes y esperamos que el modelo sea inteligente
-    //     // o le damos un mapeo (para un MVP, usar 0 por defecto es seguro).
-    //     const activityCode = 0; // Se debe mapear el 'activityType' a un código de Fit (por simplicidad, usamos 0/otro)
-
-    //     const session = {
-    //         // Identificador único para esta sesión
-    //         name: `${activityType} session recorded by MCP`,
-    //         description: `Manual entry for ${activityType} lasting ${durationMinutes} minutes.`,
-    //         startTimeMillis,
-    //         endTimeMillis,
-    //         activityType: activityCode,
-    //         // El nombre de fuente es importante para saber qué app lo creó
-    //         application: { packageName: "com.mcp.googleworkspace", version: "1.0" },
-    //     };
-
-    //     const res = await this.fit.users.sessions.insert({
-    //         userId: 'me',
-    //         requestBody: session,
-    //     });
-
-    //     return {
-    //         content: [{
-    //             type: "text",
-    //             text: `Sesión de actividad registrada exitosamente: ${activityType} de ${durationMinutes} minutos. ID: ${res.data.id}`,
-    //         }],
-    //     };
-    // }
     async recordActivitySession(args) {
-    const { activityType, durationMinutes, startTimeMillis } = args;
+        const { activityType, durationMinutes, startTimeMillis } = args;
 
-    const durationMillis = durationMinutes * 60 * 1000;
-    const endTimeMillis = startTimeMillis + durationMillis;
+        const durationMillis = durationMinutes * 60 * 1000;
+        const endTimeMillis = startTimeMillis + durationMillis;
 
-    // Mapeo de actividades a códigos de Google Fit
-    const activityMap = {
-        'running': 8,
-        'walking': 7,
-        'cycling': 1,
-        'swimming': 82,
-        'yoga': 104,
-        'weightlifting': 97,
-        'gym': 97, // Gimnasio = weightlifting
-        'musculacion': 97,
-        'sala de musculacion': 97,
-    };
+        // Mapeo de actividades a códigos de Google Fit
+        const activityMap = {
+            'running': 8,
+            'walking': 7,
+            'cycling': 1,
+            'swimming': 82,
+            'yoga': 104,
+            'weightlifting': 97,
+            'gym': 97,
+            'musculacion': 97,
+            'sala de musculacion': 97,
+        };
 
-    const activityCode = activityMap[activityType.toLowerCase()] || 108; // 108 = other
+        const activityCode = activityMap[activityType.toLowerCase()] || 108; // 108 = other
 
-    // Generar ID único para la sesión
-    const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        // Generar ID único para la sesión
+        const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-    const session = {
-        id: sessionId,
-        name: `${activityType}`,
-        description: `Sesión de ${activityType} de ${durationMinutes} minutos`,
-        startTimeMillis: startTimeMillis.toString(),
-        endTimeMillis: endTimeMillis.toString(),
-        activityType: activityCode,
-        application: {
-            packageName: "com.mcp.googleworkspace",
-            version: "1"
-        },
-    };
+        const session = {
+            id: sessionId,
+            name: `${activityType}`,
+            description: `Sesión de ${activityType} de ${durationMinutes} minutos`,
+            startTimeMillis: startTimeMillis.toString(),
+            endTimeMillis: endTimeMillis.toString(),
+            activityType: activityCode,
+            application: {
+                packageName: "com.mcp.googleworkspace",
+                version: "1"
+            },
+        };
 
-    // Usar update en lugar de insert (update crea o actualiza)
-    const res = await this.fit.users.sessions.update({
-        userId: 'me',
-        sessionId: sessionId,
-        requestBody: session,
-    });
+        const res = await this.fit.users.sessions.update({
+            userId: 'me',
+            sessionId: sessionId,
+            requestBody: session,
+        });
 
-    return {
-        content: [{
-            type: "text",
-            text: `Sesión de actividad registrada exitosamente: ${activityType} de ${durationMinutes} minutos.\nID: ${sessionId}`,
-        }],
-    };
-}
+        return {
+            content: [{
+                type: "text",
+                text: `Sesión de actividad registrada exitosamente: ${activityType} de ${durationMinutes} minutos.\nID: ${sessionId}`,
+            }],
+        };
+    }
+
     async run() {
         await this.initialize();
         const transport = new StdioServerTransport();
