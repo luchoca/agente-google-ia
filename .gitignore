@@ -1,0 +1,11 @@
+# Dependencias
+/node_modules
+
+# Archivos Sensibles y de Configuración
+credentials.json
+token.json
+
+# Archivos de la build o logs (opcional, pero buena práctica)
+*.log
+dist/
+build/
